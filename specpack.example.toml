@@ -1,0 +1,21 @@
+# specpack settings. Copy to specpack.toml (ignored by Git) and edit; pass another
+# file with --settings. Every path is explicit: nothing is searched for.
+
+# One table per SPEC kit; commands select one with --kit <name>.
+[kit.cpu2026]
+version  = 2026                                       # 2017 or 2026; must match the kit's shrc (UCSUITE)
+spec_dir = "/home/ubuntu/work/spec2026/cpu2026-1.0.1"  # an installed kit (install.sh)
+config   = "configs/cpu2026-rv64gc-gcc13-static.cfg"  # relative to the specpack repository
+label    = "rv64gc-gcc13-static"                      # SPEC label: names binaries, run directories, bundles
+
+[toolchain]
+prefix = "/home/ubuntu/work/simpoint-chipyard/.conda-env/riscv-tools/bin/riscv64-unknown-linux-gnu-"
+
+[qemu]
+riscv64 = "/usr/bin/qemu-riscv64"                     # plain QEMU user mode
+
+[build]
+jobs = 32                                             # parallel compiles within one benchmark
+
+[output]
+dir = "/home/ubuntu/work/specpack-out"                # bundles; they contain licensed SPEC inputs
