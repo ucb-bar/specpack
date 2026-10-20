@@ -192,3 +192,64 @@ class RvExecTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class FireMarshalTest(Fixture):
+    def setUp(self):
+        super().setUp()
+        from specpack.adapters import firemarshal
+        self.fm = firemarshal
+        self.s = self.load(self.settings_text())
+        self.k = self.s.kit('cpu2026')
+        self.bundle = self.tmp / 'bundle' / '821.gcc_s'
+        _write(self.bundle / 'run' / 'cc1_s_base.lab', 'bin')
+        _write(self.bundle / 'run' / 't1.c', 'int main;')
+        _write(self.bundle / 'run' / 'text-sha256', '#!perl')
+        self.manifest = {
+            'benchmark': '821.gcc_s', 'size': 'test', 'kit': {'name': 'cpu2026'}, 'label': 'rv64gc-gcc13-static',
+            'specpack': 'abc', 'validation': None, 'environment': {'OMP_NUM_THREADS': '1', 'OMP_STACKSIZE': '120M'},
+            'invocations': [{'index': 0, 'cwd': '.', 'program': './cc1_s_base.lab',
+                             'arguments_shell': 't1.c -O3 -o t1.c.0001.s > t1.out 2>> t1.err'}],
+            'pre_compare': [{'index': 0, 'cwd': '.', 'program': '/k/bin/specperl', 'program_is_bundled': False,
+                             'arguments_shell': 'text-sha256 t1.c.0001.s > t1.c.0001.s.sha256'}],
+            'compare': [{'index': 0, 'cwd': '.', 'program': './check_base.lab', 'program_is_bundled': True,
+                         'arguments_shell': '-l 10 /k/ref/t1.c.0001.s.sha256 t1.c.0001.s.sha256'}],
+            'binaries': {'cc1_s_base.lab': {'sha256': 'aa', 'debug_sha256': 'bb'}},
+        }
+        _write(self.bundle / 'manifest.json', json.dumps(self.manifest))
+        self.launcher = _write(self.tmp / 'interval-submit', 'launcher')
+
+    def test_layout_matches_staging_contract(self):
+        dest = self.tmp / 'fm' / '821.gcc_s'
+        image = self.fm.package(self.bundle, dest, self.s, self.k, self.launcher, {'start': [1], 'end': [2]})
+        name = 'cpu2026-rv64gc-gcc13-static-test-821-gcc_s'
+        self.assertEqual(image['workload'], f'{name}.json')
+        config = json.loads((dest / f'{name}.json').read_text())
+        self.assertEqual((config['base'], config['command'], config['outputs']), ('br-base.json', './run-interval.sh', ['/output']))
+        self.assertEqual(config['rootfs-size'], '2GiB')
+        self.assertTrue((dest / 'overlay' / '821.gcc_s' / 't1.c').is_file())
+        meta = json.loads((dest / 'benchmark.json').read_text())
+        self.assertEqual(meta, json.loads((dest / 'overlay' / 'benchmark.json').read_text()))
+        self.assertEqual(meta['invocations'], [{'epoch': 1, 'executable': 'cc1_s_base.lab',
+                                                'arguments_shell': 't1.c -O3 -o t1.c.0001.s > t1.out 2>> t1.err'}])
+        self.assertEqual(meta['spec_dir'], str(self.kit))
+        self.assertEqual(len(meta['comparisons']), 2)
+        self.assertIn('rv-exec', meta['comparisons'][1])
+        self.assertIn(str(self.bundle / 'run' / 'check_base.lab'), meta['comparisons'][1])
+
+    def test_run_script_markers_environment_and_outputs(self):
+        dest = self.tmp / 'fm' / '821.gcc_s'
+        self.fm.package(self.bundle, dest, self.s, self.k, self.launcher, {'start': [1], 'end': [2]})
+        script = (dest / 'overlay' / 'run-interval.sh').read_text()
+        self.assertIn('export OMP_STACKSIZE=120M', script)
+        self.assertIn('/interval-submit --status-file /output/status/0000 ./cc1_s_base.lab t1.c -O3', script)
+        self.assertIn("echo 'PASS spec-interval 821.gcc_s invocations=1'", script)
+        for name in ('t1.out', 't1.err', 't1.c.0001.s', 'text-sha256', 't1.c.0001.s.sha256'):
+            self.assertIn(f'cp {name} /output/{name}', script)
+        self.assertNotIn('/k/ref', script)
+
+    def test_rejects_bundle_from_another_kit(self):
+        self.manifest['label'] = 'other'
+        _write(self.bundle / 'manifest.json', json.dumps(self.manifest))
+        with self.assertRaisesRegex(ValueError, 'bundle is for'):
+            self.fm.package(self.bundle, self.tmp / 'fm' / 'x', self.s, self.k, self.launcher, {})

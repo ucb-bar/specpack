@@ -34,6 +34,7 @@ Every command names its kit with `--kit NAME`; there is no default kit.
 python3 -m specpack build    --kit cpu2026 intspeed
 python3 -m specpack validate --kit cpu2026 --size test intspeed
 python3 -m specpack export   --kit cpu2026 --size test intspeed
+python3 -m specpack package firemarshal --kit cpu2026 --size test --all
 ```
 
 Benchmarks are anything `runcpu` accepts: names (`821.gcc_s`) or suites (`intspeed`).
@@ -46,6 +47,9 @@ Benchmarks are anything `runcpu` accepts: names (`821.gcc_s`) or suites (`intspe
   and the binaries' hashes in `<dir>/<kit>/<label>/<size>/validation.json`.
 - **export** sets up fresh run directories (`runcpu --action runsetup`, input generators
   through QEMU, benchmarks not run) and writes one bundle per benchmark.
+
+- **package firemarshal** turns bundles into FireMarshal workloads for FireSim interval
+  capture (see below).
 
 `build` must come first; `validate` and `export` never build (`--nobuild`).
 
@@ -73,6 +77,39 @@ Benchmarks are anything `runcpu` accepts: names (`821.gcc_s`) or suites (`intspe
 
 Invocations, environment and checks come from SPEC itself: `specinvoke -nn` on the
 command files that `runsetup` wrote.
+
+## FireMarshal adapter
+
+`package firemarshal` writes `<dir>/<kit>/<label>/<size>/firemarshal/`: an `images.json`
+index, the `interval-submit` launcher compiled from `launchers/` with the settings'
+toolchain, and per benchmark:
+
+```
+<benchmark>/
+  <kit>-<label>-<size>-<benchmark>.json   FireMarshal config: br-base, disk image, /output collected
+  benchmark.json                          read by tools/interval-trace/check-compact-capture.py
+  overlay/
+    <benchmark>/                          the bundle's run/ directory
+    interval-submit, benchmark.json
+    run-interval.sh                       each invocation between the FireSim interval markers
+```
+
+It keeps the contract of `tools/interval-trace/prepare-spec-tests.py`, so FireMarshal,
+FireSim and the capture checker work unchanged: the run script prints
+`PASS spec-interval <benchmark> invocations=N`, writes `/output/status/NNNN` and
+`/output/exitcode`, and copies back every redirection target and every relative file the
+output checks name. `benchmark.json` lists the checks as bash commands that the checker
+runs in the collected `output/` with `SPEC` set; they source the kit's `shrc`, and bundled
+RISC-V checkers run from the bundle through `rv-exec`. The disk image is
+`max(2, ceil((2 × overlay + 0.5 GiB) / 1 GiB))` GiB.
+
+Building and running an image, from the Chipyard root in its sourced environment:
+
+```sh
+software/firemarshal/marshal build   <config.json>
+software/firemarshal/marshal launch  <config.json>     # functional check in QEMU
+software/firemarshal/marshal install <config.json>     # FireSim workload definition
+```
 
 ## Environment
 

@@ -3,8 +3,10 @@
   python3 -m specpack [--settings FILE] build    --kit KIT BENCHMARK...
   python3 -m specpack [--settings FILE] validate --kit KIT --size SIZE BENCHMARK...
   python3 -m specpack [--settings FILE] export   --kit KIT --size SIZE BENCHMARK...
+  python3 -m specpack [--settings FILE] package firemarshal --kit KIT --size SIZE (--all | BENCHMARK...)
 
-BENCHMARK is anything runcpu accepts: benchmark names or suites such as intspeed.
+For build, validate and export, BENCHMARK is anything runcpu accepts: benchmark names or
+suites such as intspeed. For package it names exported bundles.
 """
 import argparse
 import datetime
@@ -15,6 +17,7 @@ import subprocess
 import sys
 
 from . import bundle, runcpu, settings as settings_mod
+from .adapters import firemarshal
 from .settings import ROOT, SettingsError
 
 SIZES = ('test', 'train', 'ref')
@@ -126,6 +129,33 @@ def cmd_export(settings, kit, args):
     return 0
 
 
+def cmd_package(settings, kit, args):
+    root = settings.bundle_dir(kit, args.size)
+    available = sorted(p.name for p in root.iterdir() if (p / 'manifest.json').is_file()) if root.is_dir() else []
+    chosen = available if args.all else args.benchmarks
+    missing = [b for b in chosen if b not in available]
+    if missing or not chosen:
+        print(f'specpack: no bundle for {", ".join(missing) or "any benchmark"} in {root} (run export first)',
+              file=sys.stderr)
+        return 1
+    out = root / args.adapter
+    out.mkdir(parents=True, exist_ok=True)
+    launcher = firemarshal.build_launcher(settings, out)
+    pcs = firemarshal.marker_pcs(settings, launcher)
+    images = []
+    for benchmark in chosen:
+        image = firemarshal.package(root / benchmark, out / benchmark, settings, kit, launcher, pcs)
+        images.append(image)
+        print(f'specpack: {benchmark}: {image["invocations"]} invocation(s), rootfs {image["rootfs_size"]} -> {image["config"]}')
+    index = out / 'images.json'
+    previous = {i['benchmark']: i for i in json.loads(index.read_text())['prepared']} if index.exists() else {}
+    previous.update({i['benchmark']: i for i in images})
+    _write_json(index, {'kit': kit.name, 'label': kit.label, 'size': args.size,
+                        'launcher_sha256': bundle.sha256(launcher), 'marker_pcs': pcs,
+                        'prepared': [previous[b] for b in sorted(previous)]})
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='specpack', description=__doc__.splitlines()[0])
     parser.add_argument('--settings', type=Path, default=settings_mod.DEFAULT,
@@ -137,6 +167,13 @@ def main(argv=None):
         if needs_size:
             p.add_argument('--size', required=True, choices=SIZES)
         p.add_argument('benchmarks', nargs='+')
+    p = sub.add_parser('package', help='turn exported bundles into platform workloads')
+    p.add_argument('adapter', choices=('firemarshal',))
+    p.add_argument('--kit', required=True, help='a [kit.NAME] table in the settings file')
+    p.add_argument('--size', required=True, choices=SIZES)
+    which = p.add_mutually_exclusive_group(required=True)
+    which.add_argument('--all', action='store_true', help='every bundle exported for this kit and size')
+    which.add_argument('benchmarks', nargs='*', default=[])
     args = parser.parse_args(argv)
     try:
         settings = settings_mod.load(args.settings)
@@ -145,7 +182,8 @@ def main(argv=None):
         print(f'specpack: {error}', file=sys.stderr)
         return 2
     print(f'specpack: settings {settings.path}, kit {kit.name} (CPU{kit.version}, {kit.spec_dir}), label {kit.label}')
-    return {'build': cmd_build, 'validate': cmd_validate, 'export': cmd_export}[args.command](settings, kit, args)
+    commands = {'build': cmd_build, 'validate': cmd_validate, 'export': cmd_export, 'package': cmd_package}
+    return commands[args.command](settings, kit, args)
 
 
 if __name__ == '__main__':
