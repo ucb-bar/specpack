@@ -97,8 +97,9 @@ toolchain, and per benchmark:
 It keeps the contract of `tools/interval-trace/prepare-spec-tests.py`, so FireMarshal,
 FireSim and the capture checker work unchanged: the run script prints
 `PASS spec-interval <benchmark> invocations=N`, writes `/output/status/NNNN` and
-`/output/exitcode`, and copies back every redirection target and every relative file the
-output checks name. `benchmark.json` lists the checks as bash commands that the checker
+`/output/exitcode`, and copies back every file the run created (anything in the run
+directory that is not listed in `specpack-inputs.list`) plus the inputs the output checks
+read. `benchmark.json` lists the checks as bash commands that the checker
 runs in the collected `output/` with `SPEC` set; they source the kit's `shrc`, and bundled
 RISC-V checkers run from the bundle through `rv-exec`. The disk image is
 `max(2, ceil((2 × overlay + 0.5 GiB) / 1 GiB))` GiB.

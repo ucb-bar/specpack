@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 from pathlib import Path
 import stat
 import subprocess
@@ -215,6 +216,7 @@ class FireMarshalTest(Fixture):
             'compare': [{'index': 0, 'cwd': '.', 'program': './check_base.lab', 'program_is_bundled': True,
                          'arguments_shell': '-l 10 /k/ref/t1.c.0001.s.sha256 t1.c.0001.s.sha256'}],
             'binaries': {'cc1_s_base.lab': {'sha256': 'aa', 'debug_sha256': 'bb'}},
+            'files': {'t1.c': {'sha256': 'cc', 'bytes': 9}, 'text-sha256': {'sha256': 'dd', 'bytes': 6}},
         }
         _write(self.bundle / 'manifest.json', json.dumps(self.manifest))
         self.launcher = _write(self.tmp / 'interval-submit', 'launcher')
@@ -244,9 +246,28 @@ class FireMarshalTest(Fixture):
         self.assertIn('export OMP_STACKSIZE=120M', script)
         self.assertIn('/interval-submit --status-file /output/status/0000 ./cc1_s_base.lab t1.c -O3', script)
         self.assertIn("echo 'PASS spec-interval 821.gcc_s invocations=1'", script)
-        for name in ('t1.out', 't1.err', 't1.c.0001.s', 'text-sha256', 't1.c.0001.s.sha256'):
+        for name in ('text-sha256', 't1.c.0001.s', 't1.c.0001.s.sha256'):
             self.assertIn(f'cp {name} /output/{name}', script)
         self.assertNotIn('/k/ref', script)
+        self.assertIn('grep -vxF -f /specpack-inputs.list', script)
+        inputs = (dest / 'overlay' / 'specpack-inputs.list').read_text().split()
+        self.assertEqual(inputs, ['cc1_s_base.lab', 't1.c', 'text-sha256'])
+
+    def test_run_script_copies_back_every_created_file(self):
+        dest = self.tmp / 'fm' / '821.gcc_s'
+        self.fm.package(self.bundle, dest, self.s, self.k, self.launcher, {'start': [1], 'end': [2]})
+        overlay = dest / 'overlay'
+        script = (overlay / 'run-interval.sh').read_text()
+        copy_back = script[script.index('find . -type f'):script.index('echo "$overall" > /output/exitcode')]
+        root = self.tmp / 'guest'
+        shutil.copytree(overlay / '821.gcc_s', root / 'bench')
+        _write(root / 'bench' / 't1.c.0001.s', 'asm')
+        _write(root / 'bench' / 'sub' / 'r.sha512', 'h')
+        copy_back = copy_back.replace('/specpack-inputs.list', str(overlay / 'specpack-inputs.list'))
+        copy_back = copy_back.replace('/output', str(root / 'output')).replace('/tmp/specpack-outputs', str(root / 'list'))
+        subprocess.run(['sh', '-c', copy_back], cwd=root / 'bench', check=True)
+        copied = sorted(p.relative_to(root / 'output').as_posix() for p in (root / 'output').rglob('*') if p.is_file())
+        self.assertEqual(copied, ['sub/r.sha512', 't1.c.0001.s', 'text-sha256'])
 
     def test_rejects_bundle_from_another_kit(self):
         self.manifest['label'] = 'other'
