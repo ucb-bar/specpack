@@ -253,6 +253,24 @@ class FireMarshalTest(Fixture):
         inputs = (dest / 'overlay' / 'specpack-inputs.list').read_text().split()
         self.assertEqual(inputs, ['cc1_s_base.lab', 't1.c', 'text-sha256'])
 
+    def test_no_aslr_turns_randomisation_off_before_the_first_invocation(self):
+        pcs = {'start': [1], 'end': [2]}
+        self.fm.package(self.bundle, self.tmp / 'fm' / '821.gcc_s', self.s, self.k, self.launcher, pcs)
+        default = (self.tmp / 'fm' / '821.gcc_s' / 'overlay' / 'run-interval.sh').read_text()
+        self.assertNotIn('randomize_va_space', default)
+        dest = self.tmp / 'fm-noaslr' / '821.gcc_s'
+        image = self.fm.package(self.bundle, dest, self.s, self.k, self.launcher, pcs, aslr=False)
+        self.assertEqual(image['workload'], 'cpu2026-rv64gc-gcc13-static-test-noaslr-821-gcc_s.json')
+        script = (dest / 'overlay' / 'run-interval.sh').read_text()
+        off = '\n'.join(self.fm.ASLR_OFF) + '\n'
+        self.assertIn('echo 0 > /proc/sys/kernel/randomize_va_space\n', off)
+        # the only difference from the default script, after ulimit and before anything runs
+        self.assertEqual(script, default.replace('ulimit -s unlimited\n', 'ulimit -s unlimited\n' + off))
+        self.assertLess(script.index(off), script.index('/interval-submit'))
+        self.assertIs(json.loads((dest / 'benchmark.json').read_text())['address_space_randomization'], False)
+        self.assertIs(json.loads((self.tmp / 'fm' / '821.gcc_s' / 'benchmark.json').read_text())
+                      ['address_space_randomization'], True)
+
     def test_run_script_copies_back_every_created_file(self):
         dest = self.tmp / 'fm' / '821.gcc_s'
         self.fm.package(self.bundle, dest, self.s, self.k, self.launcher, {'start': [1], 'end': [2]})

@@ -104,6 +104,20 @@ runs in the collected `output/` with `SPEC` set; they source the kit's `shrc`, a
 RISC-V checkers run from the bundle through `rv-exec`. The disk image is
 `max(2, ceil((2 × overlay + 0.5 GiB) / 1 GiB))` GiB.
 
+With `--no-aslr` the workloads go to `<dir>/<kit>/<label>/<size>/firemarshal-noaslr/`, are named
+`<kit>-<label>-<size>-noaslr-<benchmark>`, and their run script turns address-space randomisation off
+before the first invocation:
+
+```sh
+echo 0 > /proc/sys/kernel/randomize_va_space
+echo "randomize_va_space=$(cat /proc/sys/kernel/randomize_va_space)"    # the level, in the uartlog
+```
+
+With randomisation on, the addresses of the stack and of mapped memory differ from run to run, and so
+does the number of instructions a benchmark executes. Use `--no-aslr` when captures of one benchmark
+on several hardware configurations have to execute the same user instructions. The choice is fixed in
+the image; `benchmark.json` and `images.json` record it as `address_space_randomization`.
+
 Building and running an image, from the Chipyard root in its sourced environment:
 
 ```sh
